@@ -1,0 +1,54 @@
+trivy-doc
+----------
+what is trivy?
+installing trivy on Linux as well in Jenkins as plugin?
+ sudo rpm -ivh https://github.com/aquasecurity/trivy/releases/download/v0.51.4/trivy_0.51.4_Linux-64bit.rpm
+                        or
+docker image ---------> sudo docker pull aquasec/trivy:latest
+why we need trivy?
+how to configure trivy in Jenkins?
+how to integrate trivy as a stage in side the pipeline ?
+how to view trivy reports?
+pipeline utility steps plugin for read json format.
+
+trivy commands:
+_______________
+Examples:
+  # Scan a container image
+  $ trivy image python:3.4-alpine
+
+  # Scan a container image from a tar archive
+  $ trivy image --input ruby-3.1.tar
+
+  # Scan local filesystem
+  $ trivy fs .
+
+  # Run in server mode
+  $ trivy server
+
+Scanning Commands
+  aws         [EXPERIMENTAL] Scan AWS account
+  config      Scan config files for misconfigurations
+  filesystem  Scan local filesystem
+  image       Scan a container image
+  kubernetes  [EXPERIMENTAL] Scan kubernetes cluster
+  repository  Scan a repository
+  rootfs      Scan rootfs
+  sbom        Scan SBOM for vulnerabilities and licenses
+  vm          [EXPERIMENTAL] Scan a virtual machine image
+
+Management Commands
+  module      Manage modules
+  plugin      Manage plugins
+
+Utility Commands
+  completion  Generate the autocompletion script for the specified shell
+  convert     Convert Trivy JSON report into a different format
+  help        Help about any command
+  server      Server mode
+  version     Print the version
+
+
+
+===============================================================
+trivy scans the war file along with the base image

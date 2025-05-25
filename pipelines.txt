@@ -1,0 +1,94 @@
+pipeline{
+    agent any
+    environment{
+    def filetoload='test.groovy'
+    }
+    parameters {
+        choice(name: 'FUNCTION_NAME', choices: ['call()', 'call2()'], description: 'Select function to call')
+    }
+    stages{
+        stage('test'){
+            steps{
+                script{
+                switch (filetoload) {
+                if(filetoload == test.groovy){
+                case 'test.groovy':
+                 @Library('my-library') _
+                // Only functions from functions1 will be available
+                switch ('FUNCTION_NAME') {
+                  case 'call':
+                  test.call()
+                   break
+                }
+               break
+                 default:
+                  echo "files not loaded"
+                   if (filetoload == 'test.groovy'){
+                    def functionName = params.FUNCTION_NAME
+                    switch (functionName) {
+                        case 'call':
+                            test.call()
+                            break
+                        case 'call2':
+                            test.call2()
+                            break
+                        default:
+                        echo "no function avaliable"
+                    }
+
+                }
+                    }               
+            }
+            }
+        }
+    }
+}
+-----------------------------------------
+pipeline{
+    agent any
+    environment{
+    def filetoload='test.groovy'
+    }
+    parameters {
+        choice(name: 'FUNCTION_NAME', choices: ['call()', 'call2()'], description: 'Select function to call')
+    }
+    stages{
+        stage('test'){
+            steps{
+                script{
+                switch (filetoload) {
+                if(filetoload == "test.groovy"){
+                case 'test.groovy':
+                 @Library('my-library') _
+                // Only functions from functions1 will be available
+                  switch ('FUNCTION_NAME') {
+                  case 'call':
+                  test.call()
+                   break
+                }
+                }
+                }
+               break
+                 default:
+                  echo "files not loaded"
+                   if (filetoload == 'test.groovy'){
+                    def functionName = params.FUNCTION_NAME
+                    switch (functionName) {
+                        case 'call':
+                            test.call()
+                            break
+                        case 'call2':
+                            test.call2()
+                            break
+                        default:
+                        echo "no function avaliable"
+                    }
+
+                }
+                    }               
+            }
+            }
+        }
+    }
+}
+

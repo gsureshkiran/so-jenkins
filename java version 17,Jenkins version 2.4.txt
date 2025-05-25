@@ -1,0 +1,197 @@
+java version 17,Jenkins version 2.452.3, SonarQube latest version, jfrog version 6.18.5,trivy version 0.51.4, docker version 25.0.3, maven version 3.9.6, git version 2.40.1.
+--------------------------------------------------------------------------------------------------------------------------------- 
+pipeline {
+    agent any
+    tools {
+        maven 'maven'
+     }
+    environment {
+        SONARQUBE_CREDS = credentials('sonarqube')  // This assumes 'sonarqube' is the ID of your SonarQube credentials in Jenkins
+        IMAGE_NAME = 'demo-pet'
+        IMAGE_TAG = 'latest'
+        IMAGE_FULL_NAME = "${IMAGE_NAME}:${IMAGE_TAG}"
+        TRIVY_REPORT_PATH = 'trivy-report.txt'
+        TRIVY_JSON_REPORT_PATH = 'trivy-report.json'
+        // Define the Trivy version to use
+        TRIVY_VERSION = '0.51.4'
+
+        
+    }
+    options {
+        
+        // Keep only the last 5 builds
+        buildDiscarder(logRotator(numToKeepStr: '2'))
+    }
+
+  
+    stages {
+        stage('Git Checkout') {
+            steps {
+                checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/itengineers99/cicdproject.git']])
+               
+           }
+        }
+        stage('compile'){
+            steps{
+            sh 'mvn compile'
+        }
+        }
+        stage('test'){
+            steps{
+               sh 'mvn test'
+            }
+        }
+        
+        stage('quality'){
+          steps{
+             withSonarQubeEnv(installationName: 'sonarqube', credentialsId: 'sonarqube') {
+                    // Your SonarQube analysis steps here
+                    sh 'mvn sonar:sonar'
+                }
+            }
+        }
+        stage('package'){
+          steps{
+              sh 'mvn package -DskipTests'
+          }
+       }
+       stage('install'){
+           steps{
+               sh 'mvn install'
+           }
+       }
+           
+      
+       
+       stage('jfrog_config'){
+          steps{
+            rtServer (
+                    id: "jfrog",
+                    url: "http://54.179.197.48:8081/artifactory",
+                    credentialsId: "jfrog"
+                )
+                rtMavenDeployer (
+                    id: "MAVEN_DEPLOYER",
+                    serverId: "jfrog",
+                    releaseRepo: "libs-release",
+                    snapshotRepo: "libs-snapshot"
+                )
+                rtMavenResolver (
+                id: "MAVEN_RESOLVER",
+                    serverId: "jfrog",
+                    releaseRepo: "libs-release",
+                    snapshotRepo: "libs-snapshot"
+               )
+          }
+          }
+          stage('deploy_artifacts'){
+              steps{
+                   rtMavenRun (
+                    tool: "maven",
+                    pom: 'pom.xml',
+                    goals: 'clean deploy',
+                    deployerId: "MAVEN_DEPLOYER",
+                    resolverId: "MAVEN_RESOLVER")
+                }
+           }
+           stage('publish_artifacts'){
+              steps{
+                  rtPublishBuildInfo (
+                    serverId: "jfrog"
+             )
+              }
+           }
+           stage('Build Docker Image') {
+            steps {
+                script {
+                    // Build the Docker image
+                    sh 'docker build --ulimit nofile=4096:4096 -t sureshkiran/${IMAGE_FULL_NAME} .'
+                }
+            }
+        }
+        stage('Scan with Trivy') {
+            steps {
+                script {
+                    // Run Trivy scan on th
+                     sh "trivy image sureshkiran/${IMAGE_FULL_NAME} --format json --output ${TRIVY_JSON_REPORT_PATH}"
+                     archiveArtifacts artifacts: "${TRIVY_REPORT_PATH}, ${TRIVY_JSON_REPORT_PATH}"
+                      }
+               }
+        }
+         stage('Analyze and Fail Build on Critical Vulnerabilities') {
+            steps {
+                script {
+                    // Analyze the Trivy report
+                    echo "Analyzing Trivy scan results.."
+                    def report = readFile file: "${TRIVY_JSON_REPORT_PATH}"
+                    def json = readJSON text: report
+                    def vulnerabilities = json['Results'][0]['Vulnerabilities']
+                    def criticalFound = vulnerabilities.find { it['Severity'] == 'Critical' }
+                    if (criticalFound) {
+                        error "Build failed due to critical vulnerabilities: ${criticalFound}"
+                    } else {
+                        echo "No critical vulnerabilities found."
+                    }
+                }
+            }
+          }
+          stage('push image'){
+            steps{
+                script{
+                    withCredentials([string(credentialsId: 'dockerhub', variable: 'dockerhub')]) {
+                    sh 'docker login -u sureshkiran -p ${dockerhub}'
+                    }
+                    sh 'docker push sureshkiran/${IMAGE_FULL_NAME}'
+                    
+                }
+            }
+        }
+       }
+        post {
+         success {
+          script{
+               def emailBody = """
+                <html>
+                <body>
+                    <h1 style="color: green;">Build Successful!</h1>
+                    <p>Your build has completed successfully.</p>
+                </body>
+                </html>
+                """
+             emailext(
+             to: 'g.sureshkiran@gmail.com',
+             subject: "Build Successful: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+
+             body: "The build was successful. See the results: ${env.BUILD_URL}, ${emailBody} ",
+              mimeType: 'text/html',
+
+             attachmentsPattern: "${TRIVY_JSON_REPORT_PATH}",
+                   compress: true
+                )
+         }
+       }
+        failure {
+          script{
+            def emailBody = """
+                <html>
+                <body>
+                    <h1 style="color: red;">Build Failed!</h1>
+                    <p>Your build has failed. Please check the details.</p>
+                </body>
+                </html>
+                """
+            emailext(
+             to: 'g.sureshkiran@gmail.com',
+             subject: "Build Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+             body: "The build failed. See the results: ${env.BUILD_URL}, ${emailBody}",
+             mimeType: 'text/html',
+             attachmentsPattern: "${TRIVY_JSON_REPORT_PATH}",
+                   compress: true
+                  )
+        }
+     }
+   }
+
+}
+      
+   

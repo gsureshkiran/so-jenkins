@@ -1,0 +1,279 @@
+pipeline {
+    agent any
+    tools {
+        maven 'maven'
+    }
+    environment {
+        SONARQUBE_CREDS = credentials('sonarqube')
+        IMAGE_NAME = 'my-app'
+        IMAGE_TAG = 'latest'
+        IMAGE_FULL_NAME = "${IMAGE_NAME}:${IMAGE_TAG}"
+        TRIVY_REPORT_PATH = 'trivy-report.txt'
+        TRIVY_JSON_REPORT_PATH = 'trivy-report.json'
+        // Define the Trivy version to use
+        TRIVY_VERSION = '0.51.4'
+
+    }
+    options {
+        
+        // Keep only the last 2 builds
+        buildDiscarder(logRotator(numToKeepStr: '2'))
+    }
+
+  
+    stages {
+        stage('Git Checkout') {
+            steps {
+                git 'https://github.com/roopakasireddy/Ecommerce.git'
+                
+            }
+        }
+        stage('compile'){
+            steps{
+            sh 'mvn compile'
+        }
+        }
+        stage('test'){
+            steps{
+                sh 'mvn test'
+            }
+        }
+         stage("test")
+        {
+            steps
+            {
+                catchError(buildResult: 'SUCCESS',stageResult:'FAILURE')
+                {
+                sh "mvn test"
+                script
+                {
+                    try
+                    {
+                    def testresult=junit testResults:'/target/surefire-reports/TEST-*.xml'
+                    def totaltests=testresult.totalCount
+                    def passtests=testresult.passCount
+                    def failtests=testresult.failCount
+                    def skiptests=testresult.skipCount
+                    println "total number tests are : $totaltests"
+                    println "total number of passed test: $passtests"
+                    println" total number of failed tests: $failtests"
+                    println"total number of skipped tests: $skiptests"
+                    def testpassrate=passtests/totaltests
+                    println "passed test case rate is : $testpassrate"
+                    def avgtestcaserate=passtests+skiptests/totaltests
+                    println "average test case rate : $avgtestcaserate"
+                    if(avgtestcaserate >0.80)
+                    {
+                        println "ready to scan the code for qulity test-using-sonar"
+                    }
+                    
+                }catch(Exception e)
+                {
+                    echo "unit test cases are failies: ${e.getMessage()}"
+                    currentBuild.result='FAILURE'
+                }
+            }
+        }
+    }
+}
+
+                        
+      stage('quality'){
+          steps{
+withSonarQubeEnv(installationName: 'sonarqube', credentialsId: 'sonarqube') {
+                    // Your SonarQube analysis steps here
+                    sh 'mvn sonar:sonar'
+                }
+            }
+        }
+        stage('Quality Gate') {
+            steps {
+                script {
+                    timeout (time: 10, unit: 'MINUTES'){
+                        
+                    
+                    // Wait for the SonarQube analysis report to be available
+                    def qualityGate = waitForQualityGate()
+                    echo "Quality gate status: ${qualityGate.status}"
+                    waitForQualityGate abortPipeline: false, credentialsid: sonarqube 
+
+                     Check the quality gate status
+                    if (qualityGate.status == 'OK') {
+                        def response = httpRequest(
+                                url: "http://13.232.27.38:9000/api/qualitygates/project_status?projectKey=MyEcommerceGroup:MyEcommerceArtifact",
+                                authentication: 'sonarqube',
+                                httpMode: 'GET',
+                                contentType: 'APPLICATION_JSON'
+                            )
+                            def jsonResponse = new groovy.json.JsonSlurper().parseText(response.content)
+                            def gateName = jsonResponse.projectStatus.qualityGate.name
+                            def conditions = jsonResponse.projectStatus.conditions
+                            echo "Quality Gate: ${gateName}"
+                            conditions.each { condition ->
+                                echo "Condition: ${condition.metricKey}, Status: ${condition.status}, Threshold: ${condition.errorThreshold}, Value: ${condition.actualValue}"
+                            }
+
+                            error "Quality gate failed: ${qualityGate.status}"
+                        }
+                        
+                    
+                    else{
+                    echo "go for deployment"
+                    }
+                    }
+                }
+            }
+        }
+
+      stage('package'){
+          steps{
+              sh 'mvn package'
+          }
+      }
+        stage('owasp'){
+            steps{
+                dependencyCheck additionalArguments: '--scan target/', odcInstallation: 'DC'
+            }
+        }
+        stage('publish-owasp'){
+            steps{
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        
+
+        stage('jfrog_config'){
+          steps{
+            rtServer (
+                    id: "jfrog",
+                    url: "http://3.110.223.194:8081/artifactory",
+                    credentialsId: "jfrog"
+                )
+                rtMavenDeployer (
+                    id: "MAVEN_DEPLOYER",
+                    serverId: "jfrog",
+                    releaseRepo: "libs-release",
+                    snapshotRepo: "libs-snapshot"
+                )
+                rtMavenResolver (
+                    id: "MAVEN_RESOLVER",
+                    serverId: "jfrog",
+                    releaseRepo: "libs-release",
+                    snapshotRepo: "libs-snapshot"
+               )
+          }
+          }
+          stage('deploy_artifacts'){
+              steps{
+                   rtMavenRun (
+                    tool: "maven",
+                    pom: 'pom.xml',
+                    goals: 'clean deploy',
+                    deployerId: "MAVEN_DEPLOYER",
+                    resolverId: "MAVEN_RESOLVER"
+                )
+              }
+          }
+          stage('publish_artifacts'){
+              steps{
+                  rtPublishBuildInfo (
+                    serverId: "jfrog"
+             )
+              }
+        }
+         stage('Build Docker Image') {
+            steps {
+                script {
+                    // Build the Docker image
+                    sh 'docker build --ulimit nofile=4096:4096 -t ${IMAGE_FULL_NAME} .'
+                }
+            }
+        }
+         stage('Scan with Trivy') {
+            steps {
+                script {
+                    // Run Trivy scan on th
+                     sh "trivy image ${IMAGE_FULL_NAME} --format json --output ${TRIVY_JSON_REPORT_PATH}"
+                     archiveArtifacts artifacts: "${TRIVY_REPORT_PATH}, ${TRIVY_JSON_REPORT_PATH}"
+                      }
+               }
+        }
+         stage('Analyze and Fail Build on Critical Vulnerabilities') {
+            steps {
+                script {
+                    // Analyze the Trivy report
+                    echo "Analyzing Trivy scan results.."
+                    def report = readFile file: "${TRIVY_JSON_REPORT_PATH}"
+                    def json = readJSON text: report
+                    def vulnerabilities = json['Results'][0]['Vulnerabilities']
+                    def criticalFound = vulnerabilities.find { it['Severity'] == 'CRITICAL' }
+                    if (criticalFound) {
+                        error "Build failed due to critical vulnerabilities: ${criticalFound}"
+                    } else {
+                        echo "No critical vulnerabilities found."
+                    }
+                }
+            }
+          }
+           stage('push image'){
+            steps{
+                script{
+                    withCredentials([string(credentialsId: 'dockerhub', variable: 'dockerhub')]) {
+                    sh 'docker login -u sureshkiran -p ${dockerhub}'
+                    }
+                    sh 'docker push sureshkiran/${IMAGE_FULL_NAME}'
+                    
+                }
+            }
+        }
+      }
+        post {
+         success {
+          script{
+               def emailBody = """
+                <html>
+                <body>
+                    <h1 style="color: green;">Build Successful!</h1>
+                    <p>Your build has completed successfully.</p>
+                </body>
+                </html>
+                """
+             emailext(
+             to: 'g.sureshkiran@gmail.com',
+             subject: "Build Successful: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+
+             body: "The build was successful. See the results: ${env.BUILD_URL}, ${emailBody} ",
+              mimeType: 'text/html',
+
+             attachmentsPattern: "${TRIVY_JSON_REPORT_PATH}",
+                   compress: true
+                )
+         }
+       }
+        failure {
+          script{
+            def emailBody = """
+                <html>
+                <body>
+                    <h1 style="color: red;">Build Failed!</h1>
+                    <p>Your build has failed. Please check the details.</p>
+                </body>
+                </html>
+                """
+            emailext(
+             to: 'g.sureshkiran@gmail.com',
+             subject: "Build Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+             body: "The build failed. See the results: ${env.BUILD_URL}, ${emailBody}",
+             mimeType: 'text/html',
+             attachmentsPattern: "${TRIVY_JSON_REPORT_PATH}",
+                   compress: true
+                  )
+        }
+     }
+   }
+
+}
+      
+       
+
+

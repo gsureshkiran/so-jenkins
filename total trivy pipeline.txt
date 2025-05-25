@@ -1,0 +1,123 @@
+total trivy pipeline:
+*******************************
+pipeline {
+    agent any
+
+    environment {
+        // Define the Docker image name and tag
+        IMAGE_NAME = 'my-app'
+        IMAGE_TAG = 'latest'
+        IMAGE_FULL_NAME = "${IMAGE_NAME}:${IMAGE_TAG}"
+        TRIVY_REPORT_PATH = 'trivy-report.txt'
+        TRIVY_JSON_REPORT_PATH = 'trivy-report.json'
+        // Define the Trivy version to use
+        TRIVY_VERSION = '0.51.4'
+    }
+
+
+    stages {
+        stage('checkout'){
+          steps{
+            git 'https://github.com/sresrinivas/etoe.git'
+           }
+           }
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    // Build the Docker image
+                    sh 'docker build --ulimit nofile=4096:4096 -t ${IMAGE_FULL_NAME} .'
+                }
+            }
+        }
+
+        stage('Scan with Trivy') {
+            steps {
+                script {
+                    
+                     sh "trivy image ${IMAGE_FULL_NAME} --format json --output ${TRIVY_JSON_REPORT_PATH}"
+                     archiveArtifacts artifacts: "${TRIVY_REPORT_PATH}, ${TRIVY_JSON_REPORT_PATH}"
+                      }
+                    }
+                  }
+                  stage('Analyze and Fail Build on Critical Vulnerabilities') {
+            steps {
+                script {
+                    
+                    echo "Analyzing Trivy scan results.."
+                    def report = readFile file: "${TRIVY_JSON_REPORT_PATH}"
+                    def json = readJSON text: report
+                    def vulnerabilities = json['Results'][0]['Vulnerabilities']
+                    def criticalFound = vulnerabilities.find { it['Severity'] == 'CRITICAL' }
+                    if (criticalFound) {
+                        error "Build failed due to critical vulnerabilities: ${criticalFound}"
+                    } else {
+                        echo "No critical vulnerabilities found."
+                    }
+                }
+            }
+          }
+    }
+    post {
+    success {
+        script{
+               def emailBody = """
+                <html>
+                <body>
+                    <h1 style="color: green;">Build Successful!</h1>
+                    <p>Your build has completed successfully.</p>
+                </body>
+                </html>
+                """
+             emailext(
+             to: 'g.sureshkiran@gmail.com',
+             subject: "Build Successful: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+
+             body: "The build was successful. See the results: ${env.BUILD_URL}, ${emailBody} ",
+              mimeType: 'text/html',
+
+             attachmentsPattern: "${TRIVY_JSON_REPORT_PATH}",
+                   compress: true
+                )
+        }
+    }
+    failure {
+        script{
+            def emailBody = """
+                <html>
+                <body>
+                    <h1 style="color: red;">Build Failed!</h1>
+                    <p>Your build has failed. Please check the details.</p>
+                </body>
+                </html>
+                """
+            emailext(
+             to: 'g.sureshkiran@gmail.com',
+             subject: "Build Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+             body: "The build failed. See the results: ${env.BUILD_URL}, ${emailBody}",
+             mimeType: 'text/html',
+             attachmentsPattern: "${TRIVY_JSON_REPORT_PATH}",
+                   compress: true
+                  )
+        }
+    }
+}
+
+
+}
+
+          
+
+ 
+pxba tdxx pxyx gsmh
+
+
+
+
+
+
+
+
+
+
+
+
